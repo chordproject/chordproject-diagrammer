@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { Chord, ChordDiagram, ChordDiagramCollection, Instrument, SvgBuilder } from '../dist/index.js';
 
@@ -21,10 +25,16 @@ assert.equal(collection.get(new Chord('A', 'm')).length > 0, true);
 assert.equal(collection.get(new Chord('A', 'm', 'E')).length > 0, true);
 assert.equal(collection.get(new Chord('C', '', 'G')).length > 0, true);
 assert.equal(collection.get(new Chord('D', '', 'F#')).length > 0, true);
+const cSharpSeventhPositions = collection.get(new Chord('C#', '7'));
+assert.equal(cSharpSeventhPositions.length, 5);
+assert.deepEqual(cSharpSeventhPositions[4].frets, [-1, 4, 3, 4, 0, 4]);
+assert.deepEqual(cSharpSeventhPositions[4].fingers, [0, 2, 1, 3, 0, 4]);
 
 const builder = new SvgBuilder();
 const testChord = new ChordDiagram({ frets: [-1, 0, 2, 2, 1, 0], fingers: [0, 0, 2, 3, 1, 0], baseFret: 1 });
 const guitar = new Instrument('Guitar', 6, 4, ['E', 'A', 'D', 'G', 'B', 'E']);
+const cSharpSeventhDiagram = builder.build(cSharpSeventhPositions[4], guitar, ['C#', 'E#', 'G#', 'B']);
+assert.deepEqual([...cSharpSeventhDiagram.querySelector('.neck').querySelectorAll('text')].map((label) => label.textContent), ['x', 'C♯', 'E♯', 'B', 'B', 'G♯']);
 
 builder.settings.neck.nut.visible = false;
 builder.settings.neck.stringInfo.visible = false;
@@ -80,5 +90,33 @@ assert.equal(svg.textContent?.includes('x'), true);
 assert.equal(svg.textContent?.includes('1'), true);
 assert.deepEqual([...svg.querySelector('.neck').querySelectorAll('text')].map((element) => element.textContent), ['I', 'x', 'A', 'E', 'A', 'C', 'E']);
 assert.equal([...svg.querySelectorAll('text')].find((element) => element.textContent === '1')?.getAttribute('y'), '7');
+
+const generatorTempDirectory = await mkdtemp(join(tmpdir(), 'diagrammer-generator-test-'));
+try {
+	const sourcePath = join(generatorTempDirectory, 'source.json');
+	const outputPath = join(generatorTempDirectory, 'guitar.json');
+	await writeFile(sourcePath, JSON.stringify({
+		chords: {
+			cSharp: [{
+				key: 'C#',
+				suffix: '7',
+				positions: [{ frets: [-1, 4, 3, 4, 2, -1], fingers: [0, 3, 2, 4, 1, 0], baseFret: 1 }],
+			}],
+			g: [{
+				key: 'G',
+				suffix: '7/B',
+				positions: [{ frets: [-1, 2, 0, 0, 0, 1], fingers: [0, 2, 0, 0, 0, 1], baseFret: 1 }],
+			}],
+		},
+	}));
+	execFileSync(process.execPath, [fileURLToPath(new URL('./generate-guitar-dataset.mjs', import.meta.url)), sourcePath, outputPath], { stdio: 'ignore' });
+	const generated = JSON.parse(await readFile(outputPath, 'utf8'));
+	const generatedCSharpSevenths = generated.filter((item) => item.key === 'C#' && item.type === '7');
+	assert.equal(generatedCSharpSevenths.length, 2);
+	assert.equal(generatedCSharpSevenths[1].variation, 5);
+	assert.equal(generated.filter((item) => item.key === 'G' && item.type === '7' && item.bass === 'B').length, 1);
+} finally {
+	await rm(generatorTempDirectory, { recursive: true, force: true });
+}
 
 console.log('ChordDiagramCollection smoke tests passed');

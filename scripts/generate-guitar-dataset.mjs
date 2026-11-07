@@ -31,10 +31,29 @@ for (const entries of Object.values(source.chords ?? {})) {
 }
 
 for (const definition of supplementalDefinitions) {
-    const alreadyDefined = definitions.some((existing) => {
-        return existing.key === definition.key && existing.type === definition.type && existing.bass === definition.bass;
+    const baseFret = definition.baseFret ?? 1;
+    const matchingChord = definitions.filter((existing) => {
+        return existing.key === definition.key
+            && existing.type === definition.type
+            && (existing.bass ?? '') === (definition.bass ?? '');
     });
-    if (!alreadyDefined) definitions.push(definition);
+    const alreadyDefined = matchingChord.some((existing) => {
+        return existing.key === definition.key
+            && existing.type === definition.type
+            && (existing.bass ?? '') === (definition.bass ?? '')
+            && (existing.baseFret ?? 1) === baseFret
+            && JSON.stringify(existing.frets) === JSON.stringify(definition.frets);
+    });
+    if (!alreadyDefined && (matchingChord.length === 0 || definition.additionalPosition === true)) {
+        const matchingVariations = matchingChord
+            .map((existing) => existing.variation ?? 0);
+        const { additionalPosition: _additionalPosition, ...voicing } = definition;
+        definitions.push({
+            ...voicing,
+            baseFret,
+            variation: definition.variation ?? Math.max(0, ...matchingVariations) + 1,
+        });
+    }
 }
 definitions.sort((left, right) => `${left.key}:${left.type}`.localeCompare(`${right.key}:${right.type}`));
 await mkdir(path.dirname(outputPath), { recursive: true });
